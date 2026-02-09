@@ -1,6 +1,6 @@
-# 🛡️ Autonomous QA Agent (GenAI Powered)
+# ⚡ QFlow — Autonomous QA Testing Agent
 
-> **Next-generation website testing.** An autonomous agent that combines rigorous heuristic scanning with **Google Gemini Multimodal AI** to explore, interact, and perform visual quality assurance on any web application.
+> **Next-generation website testing.** QFlow is an autonomous agent that combines rigorous heuristic scanning with **Google Gemini Multimodal AI** to explore, interact, and perform visual quality assurance on any web application.
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178c6.svg)
 ![Playwright](https://img.shields.io/badge/Playwright-Test-45ba4b.svg)
@@ -11,7 +11,7 @@
 
 ## 🚀 Overview
 
-This is not just a scraper; it is an intelligent testing entity. The Autonomous QA Agent navigates web applications just like a human user, but with the precision of a machine.
+This is not just a scraper; it is an intelligent testing entity. QFlow navigates web applications just like a human user, but with the precision of a machine.
 
 It operates on a **Hybrid Architecture**:
 1.  **Heuristic Engine:** Instantaneously detects objective failures (HTTP 404/500, Console Errors, Broken Images, SEO gaps).
@@ -46,8 +46,8 @@ The agent executes **23 distinct testing protocols** in every run:
 ### Setup
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-repo/qa-agent.git
-    cd qa-agent
+    git clone https://github.com/your-repo/qflow.git
+    cd qflow
     ```
 
 2.  **Install dependencies:**
@@ -88,6 +88,18 @@ The agent utilizes a generic model strategy to balance cost and performance:
 
 ## 🕹️ Usage
 
+### Web UI
+
+Start the web server with the built-in landing page and dashboard:
+
+```bash
+npm run serve
+```
+
+Open **http://localhost:3100** to see the QFlow landing page. Click **Launch App** to access the scan dashboard where you can paste a URL, watch real-time progress, and download the report.
+
+### CLI Mode
+
 Run the agent interactively:
 
 ```bash
@@ -102,7 +114,7 @@ The agent will prompt you for:
 ### Sample Output
 ```text
 ============================================
-     Playwright QA Agent  --  Deep Scan      
+     QFlow  --  Deep Scan      
 ============================================
 Target: http://localhost:3000
 ...
@@ -170,4 +182,4 @@ Capabilities are modular. To add a new heuristic test, add a function to `src/qa
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+© 2026 QFlow. This project is licensed under the MIT License.

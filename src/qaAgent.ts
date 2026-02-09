@@ -49,7 +49,8 @@ type FailedRequest = {
 
 // ── Globals ────────────────────────────────────────────────────────────────────
 
-const rl = createInterface({ input, output });
+const NON_INTERACTIVE = process.env.QFLOW_NON_INTERACTIVE === '1';
+const rl = NON_INTERACTIVE ? null as any : createInterface({ input, output });
 const NAV_TIMEOUT = Number(process.env.NAV_TIMEOUT_MS ?? '90000');
 const SETTLE_DELAY = 5_000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? '';
@@ -763,6 +764,12 @@ const llmAnalyzePageDuringCrawl = async (
 };
 
 const ask = async (q: string, fallback = '') => {
+  if (NON_INTERACTIVE) {
+    // In non-interactive mode, read from env vars
+    if (/url/i.test(q)) return process.env.QFLOW_URL ?? fallback;
+    if (/scope|notes/i.test(q)) return process.env.QFLOW_SCOPE ?? fallback;
+    return fallback;
+  }
   const a = (await rl.question(fallback ? `${q} [${fallback}]: ` : `${q}: `)).trim();
   return a || fallback;
 };
@@ -3103,7 +3110,7 @@ const main = async () => {
     console.error('\nQA agent failed:', err);
     process.exitCode = 1;
   } finally {
-    rl.close();
+    if (rl) rl.close();
   }
 };
 

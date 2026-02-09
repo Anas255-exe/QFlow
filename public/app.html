@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QFlow — Autonomous AI Testing</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    /* ── Reset & Variables ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --surface-hover: #f1f5f9;
+      --border: #e2e8f0;
+      --border-focus: #6366f1;
+      --text: #0f172a;
+      --text-secondary: #64748b;
+      --text-tertiary: #94a3b8;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --primary-light: #eef2ff;
+      --success: #10b981;
+      --success-light: #ecfdf5;
+      --warning: #f59e0b;
+      --warning-light: #fffbeb;
+      --error: #ef4444;
+      --error-light: #fef2f2;
+      --critical: #dc2626;
+      --critical-light: #fee2e2;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+      --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);
+      --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.06), 0 4px 6px -4px rgba(0,0,0,0.05);
+      --radius: 16px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+    }
+    html { font-size: 16px; scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: var(--primary-light); color: var(--primary); }
+
+    /* ── Navigation ────────────────────────────────────────────────────── */
+    .navbar {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(255,255,255,0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-content {
+      max-width: 960px; margin: 0 auto;
+      padding: 0 24px; height: 64px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 1.125rem; color: var(--text);
+      text-decoration: none;
+    }
+    .nav-brand svg { width: 28px; height: 28px; }
+    .nav-right { display: flex; align-items: center; gap: 16px; }
+    .nav-badge {
+      font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 4px 10px; border-radius: 20px;
+      background: var(--primary-light); color: var(--primary);
+    }
+    .nav-link {
+      font-size: 0.875rem; color: var(--text-secondary);
+      text-decoration: none; transition: color 150ms;
+    }
+    .nav-link:hover { color: var(--text); }
+
+    /* ── Main Layout ───────────────────────────────────────────────────── */
+    .main {
+      max-width: 800px; margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    /* ── Hero ──────────────────────────────────────────────────────────── */
+    .hero { text-align: center; padding: 48px 0 12px; }
+    .hero-title {
+      font-size: clamp(2rem, 5vw, 3.25rem);
+      font-weight: 800; line-height: 1.1;
+      letter-spacing: -0.03em; margin-bottom: 16px;
+    }
+    .gradient-text {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-sub {
+      font-size: 1.125rem; color: var(--text-secondary);
+      max-width: 520px; margin: 0 auto; line-height: 1.7;
+    }
+
+    /* ── Cards ─────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px;
+      transition: box-shadow 200ms ease;
+    }
+    .card:hover { box-shadow: var(--shadow-md); }
+
+    /* ── Form ──────────────────────────────────────────────────────────── */
+    .form-section { margin-top: 32px; }
+    .form-header { margin-bottom: 24px; }
+    .form-header h2 { font-size: 1.25rem; font-weight: 700; margin-bottom: 4px; }
+    .form-header p { font-size: 0.875rem; color: var(--text-secondary); }
+
+    .input-group { margin-bottom: 20px; }
+    .input-group label {
+      display: block; font-size: 0.8125rem; font-weight: 600;
+      color: var(--text); margin-bottom: 6px;
+    }
+    .optional {
+      font-weight: 400; color: var(--text-tertiary); font-size: 0.75rem;
+      margin-left: 4px;
+    }
+    .input-wrapper { position: relative; }
+    .input-icon {
+      position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+      width: 18px; height: 18px; color: var(--text-tertiary);
+      pointer-events: none;
+    }
+    input[type="url"], input[type="text"], textarea {
+      width: 100%; padding: 11px 14px;
+      border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+      font-family: var(--font); font-size: 0.9375rem; color: var(--text);
+      background: var(--surface);
+      transition: border-color 200ms, box-shadow 200ms;
+      outline: none;
+    }
+    input[type="url"] { padding-left: 42px; }
+    input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
+    input:focus, textarea:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+    }
+    textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+
+    /* ── Buttons ───────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 10px 20px;
+      border: 1.5px solid transparent; border-radius: var(--radius-sm);
+      font-family: var(--font); font-size: 0.875rem; font-weight: 600;
+      cursor: pointer; transition: all 180ms ease;
+      text-decoration: none; white-space: nowrap;
+    }
+    .btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+    .btn-lg { padding: 13px 28px; font-size: 0.9375rem; border-radius: 10px; }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #4f46e5);
+      color: #fff; border-color: transparent;
+      box-shadow: 0 1px 3px rgba(99,102,241,0.25);
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+    }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled {
+      opacity: 0.55; cursor: not-allowed; transform: none;
+      box-shadow: none;
+    }
+    .btn-outline {
+      background: var(--surface); color: var(--text);
+      border-color: var(--border);
+    }
+    .btn-outline:hover { background: var(--surface-hover); border-color: #cbd5e1; }
+    .btn-ghost { background: transparent; color: var(--text-secondary); }
+    .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+    .btn-block { width: 100%; }
+
+    /* ── Scan Progress ─────────────────────────────────────────────────── */
+    .scan-section { margin-top: 32px; }
+    .scan-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
+    }
+    .scan-status { display: flex; align-items: center; gap: 10px; }
+    .pulse-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--primary);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(99,102,241,0.5); }
+      50% { opacity: 0.7; box-shadow: 0 0 0 8px rgba(99,102,241,0); }
+    }
+    .scan-status-text { font-weight: 600; font-size: 0.9375rem; }
+    .scan-meta {
+      display: flex; align-items: center; gap: 16px;
+      font-size: 0.8125rem; color: var(--text-secondary);
+    }
+    .scan-url {
+      max-width: 280px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; direction: rtl; text-align: left;
+    }
+    .scan-elapsed { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+    /* Phase Indicator */
+    .phases {
+      display: flex; gap: 4px; margin-bottom: 20px;
+      background: var(--surface-hover); border-radius: 8px;
+      padding: 4px; overflow-x: auto;
+    }
+    .phase {
+      flex: 1; min-width: 0; padding: 8px 12px;
+      border-radius: 6px; font-size: 0.75rem; font-weight: 500;
+      color: var(--text-tertiary); text-align: center;
+      white-space: nowrap; transition: all 250ms;
+    }
+    .phase.active {
+      background: var(--surface); color: var(--primary);
+      box-shadow: var(--shadow-sm); font-weight: 600;
+    }
+    .phase.done { color: var(--success); }
+
+    /* Bug Counter */
+    .bug-counter {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 16px; padding: 10px 16px;
+      background: var(--error-light); border-radius: var(--radius-sm);
+      border: 1px solid #fecaca; font-size: 0.875rem; font-weight: 500;
+      color: var(--error);
+    }
+    .bug-counter.empty { display: none; }
+
+    /* Terminal */
+    .terminal {
+      background: #0f172a; border-radius: var(--radius-md);
+      padding: 16px 20px; max-height: 380px; overflow-y: auto;
+      font-family: var(--mono); font-size: 0.8125rem; line-height: 1.65;
+      color: #cbd5e1;
+    }
+    .terminal::-webkit-scrollbar { width: 6px; }
+    .terminal::-webkit-scrollbar-track { background: transparent; }
+    .terminal::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .log-line { padding: 1px 0; word-break: break-all; }
+    .log-line.status { color: #94a3b8; }
+    .log-line.bug { color: #f87171; font-weight: 500; }
+    .log-line.success { color: #34d399; }
+    .log-line.warn { color: #fbbf24; }
+    .log-line.header { color: #818cf8; font-weight: 600; }
+    .log-line.stderr { color: #fb923c; opacity: 0.8; }
+    .log-line.ai { color: #c084fc; }
+
+    .scan-footer { margin-top: 16px; display: flex; justify-content: flex-end; }
+
+    /* ── Results ────────────────────────────────────────────────────────── */
+    .results-section { margin-top: 32px; }
+    .results-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+    }
+    .results-header h2 { font-size: 1.5rem; font-weight: 700; }
+    .results-actions { display: flex; gap: 10px; }
+    .results-meta {
+      font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 20px;
+    }
+    .results-meta span { margin-right: 20px; }
+
+    /* Severity Grid */
+    .severity-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 12px; margin-bottom: 24px;
+    }
+    @media (max-width: 600px) {
+      .severity-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    .sev-card {
+      padding: 20px 16px; border-radius: var(--radius-md);
+      text-align: center; border-left: 4px solid;
+      background: var(--surface); box-shadow: var(--shadow-sm);
+    }
+    .sev-card .count {
+      font-size: 2rem; font-weight: 800; line-height: 1;
+      margin-bottom: 4px; font-variant-numeric: tabular-nums;
+    }
+    .sev-card .label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .sev-critical { border-color: var(--critical); }
+    .sev-critical .count { color: var(--critical); }
+    .sev-critical .label { color: var(--critical); }
+    .sev-high { border-color: var(--error); }
+    .sev-high .count { color: var(--error); }
+    .sev-high .label { color: var(--error); }
+    .sev-medium { border-color: var(--warning); }
+    .sev-medium .count { color: var(--warning); }
+    .sev-medium .label { color: var(--warning); }
+    .sev-low { border-color: #6366f1; }
+    .sev-low .count { color: #6366f1; }
+    .sev-low .label { color: #6366f1; }
+
+    /* Report Rendered Content */
+    .report-content {
+      padding: 4px 0; font-size: 0.9375rem; line-height: 1.7;
+    }
+    .report-content h1 { font-size: 1.75rem; font-weight: 700; margin: 28px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .report-content h2 { font-size: 1.35rem; font-weight: 700; margin: 24px 0 10px; }
+    .report-content h3 { font-size: 1.1rem; font-weight: 600; margin: 20px 0 8px; }
+    .report-content h4 { font-size: 0.95rem; font-weight: 600; margin: 16px 0 6px; color: var(--text-secondary); }
+    .report-content p { margin: 8px 0; }
+    .report-content hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+    .report-content ul, .report-content ol { padding-left: 24px; margin: 8px 0; }
+    .report-content li { margin: 4px 0; }
+    .report-content code {
+      background: var(--surface-hover); border: 1px solid var(--border);
+      padding: 2px 6px; border-radius: 4px; font-family: var(--mono);
+      font-size: 0.8125rem; word-break: break-all;
+    }
+    .report-content pre { margin: 12px 0; }
+    .report-content pre code {
+      display: block; padding: 16px; border-radius: var(--radius-sm);
+      background: #0f172a; color: #cbd5e1; border: none;
+      overflow-x: auto; line-height: 1.5;
+    }
+    .report-content table {
+      width: 100%; border-collapse: collapse; margin: 12px 0;
+      font-size: 0.875rem;
+    }
+    .report-content th, .report-content td {
+      padding: 8px 12px; text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .report-content th {
+      font-weight: 600; background: var(--surface-hover);
+      font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.03em;
+      color: var(--text-secondary);
+    }
+    .report-content blockquote {
+      border-left: 3px solid var(--primary); padding: 8px 16px;
+      margin: 12px 0; background: var(--primary-light);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .report-content img {
+      max-width: 100%; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); margin: 8px 0;
+      cursor: pointer; transition: transform 200ms;
+    }
+    .report-content img:hover { transform: scale(1.01); box-shadow: var(--shadow-md); }
+    .report-content strong { font-weight: 600; }
+
+    /* ── Lightbox ──────────────────────────────────────────────────────── */
+    .lightbox {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.85);
+      display: flex; align-items: center; justify-content: center;
+      padding: 40px; cursor: zoom-out; opacity: 0;
+      transition: opacity 250ms; pointer-events: none;
+    }
+    .lightbox.open { opacity: 1; pointer-events: auto; }
+    .lightbox img {
+      max-width: 100%; max-height: 100%; border-radius: 8px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    /* ── Utilities ─────────────────────────────────────────────────────── */
+    .hidden { display: none !important; }
+    .fade-in { animation: fadeIn 350ms ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .loading-spinner {
+      width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,0.3);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin 600ms linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Responsive ────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .main { padding: 20px 16px 60px; }
+      .card { padding: 20px; }
+      .hero { padding: 28px 0 8px; }
+      .nav-content { padding: 0 16px; }
+      .phases { flex-wrap: wrap; }
+      .results-header { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Navigation ──────────────────────────────────────────────────── -->
+  <nav class="navbar">
+    <div class="nav-content">
+      <a class="nav-brand" href="/" onclick="resetToHome(event)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        QFlow
+      </a>
+      <div class="nav-right">
+        <a href="/" class="nav-link" style="margin-right:4px;">Home</a>
+        <span class="nav-badge">AI Powered</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Main Content ────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- ── HERO ────────────────────────────────────────────────────── -->
+    <section id="hero" class="hero">
+      <h1 class="hero-title">
+        Autonomous <span class="gradient-text">QA Testing</span>
+      </h1>
+      <p class="hero-sub">
+        Enter a URL and let the AI-powered agent explore, test, and generate a detailed quality report — autonomously.
+      </p>
+    </section>
+
+    <!-- ── FORM ────────────────────────────────────────────────────── -->
+    <section id="form-section" class="form-section">
+      <div class="card form-card">
+        <div class="form-header">
+          <h2>New Scan</h2>
+          <p>Provide a target and optional context to guide the scan</p>
+        </div>
+        <form id="scan-form" autocomplete="off">
+          <div class="input-group">
+            <label for="url-input">Target URL</label>
+            <div class="input-wrapper">
+              <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <input type="url" id="url-input" placeholder="https://example.com" required autofocus>
+            </div>
+          </div>
+          <div class="input-group">
+            <label for="scope-input">Scope & Notes <span class="optional">optional</span></label>
+            <textarea id="scope-input" placeholder="e.g. Focus on the checkout flow, test wallet connections, verify mobile layout…" rows="3"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg btn-block" id="start-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Start Scan
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ── SCANNING ────────────────────────────────────────────────── -->
+    <section id="scan-section" class="scan-section hidden">
+      <div class="card fade-in">
+        <div class="scan-header">
+          <div class="scan-status">
+            <div class="pulse-dot" id="pulse-dot"></div>
+            <span class="scan-status-text" id="scan-status-text">Initializing…</span>
+          </div>
+          <div class="scan-meta">
+            <span class="scan-url" id="scan-url-display"></span>
+            <span class="scan-elapsed" id="scan-elapsed">0:00</span>
+          </div>
+        </div>
+
+        <div class="phases" id="phases">
+          <div class="phase" data-phase="init">🌐 Launch</div>
+          <div class="phase" data-phase="heuristic">🔍 Heuristics</div>
+          <div class="phase" data-phase="ai">🧠 AI Exploration</div>
+          <div class="phase" data-phase="workflow">⚡ Workflows</div>
+          <div class="phase" data-phase="report">📝 Report</div>
+        </div>
+
+        <div class="bug-counter empty" id="bug-counter">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span id="bug-counter-text">0 bugs found so far</span>
+        </div>
+
+        <div class="terminal" id="terminal">
+          <div id="terminal-content"></div>
+        </div>
+
+        <div class="scan-footer">
+          <button class="btn btn-ghost" id="cancel-btn">Cancel Scan</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── RESULTS ─────────────────────────────────────────────────── -->
+    <section id="results-section" class="results-section hidden">
+      <div class="fade-in">
+        <div class="results-header">
+          <div>
+            <h2 id="results-title">Scan Complete</h2>
+            <div class="results-meta">
+              <span id="results-url"></span>
+              <span id="results-duration"></span>
+            </div>
+          </div>
+          <div class="results-actions">
+            <button class="btn btn-outline" id="download-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download
+            </button>
+            <button class="btn btn-primary" id="new-scan-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New Scan
+            </button>
+          </div>
+        </div>
+
+        <div class="severity-grid" id="severity-grid"></div>
+
+        <div class="card">
+          <div class="report-content" id="report-content"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Lightbox ──────────────────────────────────────────────────── -->
+  <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" alt="Screenshot">
+  </div>
+
+  <!-- ── Application Logic ─────────────────────────────────────────── -->
+  <script>
+    // ── State ─────────────────────────────────────────────────────────
+    let currentScanId = null;
+    let currentOutputDir = null;
+    let ws = null;
+    let elapsedInterval = null;
+    let scanStart = 0;
+    let liveBugCount = 0;
+
+    // ── DOM refs ──────────────────────────────────────────────────────
+    const $ = (sel) => document.querySelector(sel);
+    const hero = $('#hero');
+    const formSection = $('#form-section');
+    const scanSection = $('#scan-section');
+    const resultsSection = $('#results-section');
+    const scanForm = $('#scan-form');
+    const urlInput = $('#url-input');
+    const scopeInput = $('#scope-input');
+    const startBtn = $('#start-btn');
+    const terminalEl = $('#terminal');
+    const termContent = $('#terminal-content');
+    const cancelBtn = $('#cancel-btn');
+    const newScanBtn = $('#new-scan-btn');
+    const downloadBtn = $('#download-btn');
+
+    // ── Navigation helper ─────────────────────────────────────────────
+    function showState(state) {
+      hero.classList.toggle('hidden', state !== 'idle');
+      formSection.classList.toggle('hidden', state !== 'idle');
+      scanSection.classList.toggle('hidden', state !== 'scanning');
+      resultsSection.classList.toggle('hidden', state !== 'results');
+      document.title = state === 'scanning'
+        ? '🔄 Scanning… | QFlow'
+        : state === 'results'
+          ? '✅ Results | QFlow'
+          : 'QFlow — Autonomous AI Testing';
+    }
+
+    function resetToHome(e) {
+      if (e) e.preventDefault();
+      showState('idle');
+      urlInput.value = '';
+      scopeInput.value = '';
+      termContent.innerHTML = '';
+      liveBugCount = 0;
+      currentScanId = null;
+      currentOutputDir = null;
+      updateBugCounter();
+      resetPhases();
+    }
+
+    // ── Phase Indicator ───────────────────────────────────────────────
+    const phasePatterns = [
+      { phase: 'init',      patterns: [/Launching Chromium/, /Navigating to/, /Waiting for page/] },
+      { phase: 'heuristic', patterns: [/Running SEO|accessibility|broken|security|performance|layout|interactive|web-app|Click-through|Testing responsive/i] },
+      { phase: 'ai',        patterns: [/LLM.*analyz|LLM.*iteration|LLM.*action|LLM.*exploration|LLM.*visual/i] },
+      { phase: 'workflow',  patterns: [/Crawling|Testing.*workflow|Testing.*modal|Testing.*dropdown|Testing.*wallet|Testing.*hover|Testing.*keyboard|Testing.*scroll|Testing.*navigation|Testing.*form/i] },
+      { phase: 'report',    patterns: [/Writing report|Generating AI/i] },
+    ];
+    let activePhase = null;
+
+    function setPhase(name) {
+      if (name === activePhase) return;
+      activePhase = name;
+      document.querySelectorAll('.phase').forEach(el => {
+        const p = el.dataset.phase;
+        el.classList.remove('active', 'done');
+        if (p === name) el.classList.add('active');
+        else if (phaseOrder(p) < phaseOrder(name)) el.classList.add('done');
+      });
+    }
+
+    function phaseOrder(p) {
+      return ['init','heuristic','ai','workflow','report'].indexOf(p);
+    }
+
+    function resetPhases() {
+      activePhase = null;
+      document.querySelectorAll('.phase').forEach(el => el.classList.remove('active', 'done'));
+    }
+
+    function detectPhase(line) {
+      for (const { phase, patterns } of phasePatterns) {
+        if (patterns.some(p => p.test(line))) { setPhase(phase); return; }
+      }
+    }
+
+    // ── Bug Counter ───────────────────────────────────────────────────
+    function updateBugCounter() {
+      const el = $('#bug-counter');
+      const txt = $('#bug-counter-text');
+      if (liveBugCount > 0) {
+        el.classList.remove('empty');
+        txt.textContent = `${liveBugCount} bug${liveBugCount > 1 ? 's' : ''} found so far`;
+      } else {
+        el.classList.add('empty');
+      }
+    }
+
+    // ── Elapsed Timer ─────────────────────────────────────────────────
+    function startTimer() {
+      scanStart = Date.now();
+      elapsedInterval = setInterval(() => {
+        const s = Math.floor((Date.now() - scanStart) / 1000);
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        $('#scan-elapsed').textContent = `${m}:${String(sec).padStart(2, '0')}`;
+      }, 1000);
+    }
+
+    function stopTimer() {
+      if (elapsedInterval) clearInterval(elapsedInterval);
+    }
+
+    // ── Log Rendering ─────────────────────────────────────────────────
+    function classifyLine(line) {
+      if (line.startsWith('[stderr]')) return 'stderr';
+      if (/BUG-\d+/.test(line)) return 'bug';
+      if (/✓|initialized|complete/i.test(line)) return 'success';
+      if (/⚠|warning/i.test(line)) return 'warn';
+      if (/═{3,}|─{3,}|╌/.test(line)) return 'header';
+      if (/LLM|AI|Gemini/i.test(line)) return 'ai';
+      if (line.trim().startsWith('->')) return 'status';
+      return '';
+    }
+
+    function appendLog(line) {
+      const div = document.createElement('div');
+      div.className = `log-line ${classifyLine(line)}`;
+      div.textContent = line;
+      termContent.appendChild(div);
+      terminalEl.scrollTop = terminalEl.scrollHeight;
+
+      // Live bug detection
+      const bugMatch = line.match(/BUG-\d+/);
+      if (bugMatch) { liveBugCount++; updateBugCounter(); }
+
+      // Phase detection
+      detectPhase(line);
+
+      // Update status text
+      if (line.trim().startsWith('->')) {
+        $('#scan-status-text').textContent = line.replace(/^\s*->\s*/, '').slice(0, 60);
+      }
+    }
+
+    // ── WebSocket ─────────────────────────────────────────────────────
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.scanId !== currentScanId) return;
+
+        if (data.type === 'log') {
+          appendLog(data.line);
+        }
+
+        if (data.type === 'complete') {
+          stopTimer();
+          if (data.outputDir) currentOutputDir = data.outputDir;
+
+          if (data.status === 'complete') {
+            setPhase('report');
+            setTimeout(() => loadResults(data), 800);
+          } else {
+            $('#scan-status-text').textContent = 'Scan failed';
+            $('#pulse-dot').style.background = 'var(--error)';
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        setTimeout(() => { if (currentScanId) connectWS(); }, 2000);
+      };
+    }
+
+    // ── Start Scan ────────────────────────────────────────────────────
+    scanForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const url = urlInput.value.trim();
+      const scope = scopeInput.value.trim() || 'Full QA scan';
+      if (!url) return;
+
+      startBtn.disabled = true;
+      startBtn.innerHTML = '<div class="loading-spinner"></div> Starting…';
+
+      try {
+        const res = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, scope }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.error || 'Failed to start scan');
+          startBtn.disabled = false;
+          startBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Scan';
+          return;
+        }
+
+        const { scanId } = await res.json();
+        currentScanId = scanId;
+        liveBugCount = 0;
+        termContent.innerHTML = '';
+        updateBugCounter();
+        resetPhases();
+
+        $('#scan-url-display').textContent = url;
+        showState('scanning');
+        setPhase('init');
+        startTimer();
+        connectWS();
+
+      } catch (err) {
+        alert('Network error. Is the server running?');
+      } finally {
+        startBtn.disabled = false;
+        startBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start Scan';
+      }
+    });
+
+    // ── Cancel ────────────────────────────────────────────────────────
+    cancelBtn.addEventListener('click', async () => {
+      if (!currentScanId) return;
+      try {
+        await fetch(`/api/scans/${currentScanId}/cancel`, { method: 'POST' });
+      } catch {}
+      stopTimer();
+      resetToHome();
+    });
+
+    // ── Load Results ──────────────────────────────────────────────────
+    async function loadResults(data) {
+      try {
+        const res = await fetch(`/api/scans/${currentScanId}/report`);
+        if (!res.ok) throw new Error('No report');
+        const { markdown, outputDir } = await res.json();
+
+        // Rewrite image paths for web serving
+        const processed = markdown.replace(
+          /!\[([^\]]*)\]\(([^)]+)\)/g,
+          (m, alt, src) => `![${alt}](/${outputDir}/${src})`
+        );
+
+        // Render markdown
+        const html = marked.parse(processed);
+        $('#report-content').innerHTML = html;
+
+        // Parse severity counts from markdown
+        parseSeverityCounts(markdown);
+
+        // Meta information
+        const duration = data.duration ? formatDuration(data.duration) : '';
+        $('#results-url').textContent = urlInput.value;
+        $('#results-duration').textContent = duration ? `Duration: ${duration}` : '';
+        $('#results-title').textContent = `Scan Complete — ${data.bugsFound || 0} Bug${(data.bugsFound || 0) !== 1 ? 's' : ''} Found`;
+
+        showState('results');
+
+        // Attach lightbox handlers to rendered images
+        document.querySelectorAll('.report-content img').forEach(img => {
+          img.addEventListener('click', () => openLightbox(img.src));
+        });
+
+      } catch (err) {
+        console.error('Failed to load report:', err);
+        showState('results');
+        $('#report-content').innerHTML = '<p>Report file could not be loaded. Check the terminal output for details.</p>';
+      }
+    }
+
+    function parseSeverityCounts(md) {
+      const grid = $('#severity-grid');
+      const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+
+      // Try to parse from the severity table in the report
+      const lines = md.split('\n');
+      for (const line of lines) {
+        const m = line.match(/\|\s*(Critical|High|Medium|Low)\s*\|\s*(\d+)\s*\|/);
+        if (m) counts[m[1]] = parseInt(m[2]);
+      }
+
+      grid.innerHTML = `
+        <div class="sev-card sev-critical"><div class="count">${counts.Critical}</div><div class="label">Critical</div></div>
+        <div class="sev-card sev-high"><div class="count">${counts.High}</div><div class="label">High</div></div>
+        <div class="sev-card sev-medium"><div class="count">${counts.Medium}</div><div class="label">Medium</div></div>
+        <div class="sev-card sev-low"><div class="count">${counts.Low}</div><div class="label">Low</div></div>
+      `;
+    }
+
+    function formatDuration(ms) {
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      return `${m}m ${s % 60}s`;
+    }
+
+    // ── Download Report ───────────────────────────────────────────────
+    downloadBtn.addEventListener('click', async () => {
+      if (!currentScanId) return;
+      try {
+        const res = await fetch(`/api/scans/${currentScanId}/report`);
+        const { markdown } = await res.json();
+        const blob = new Blob([markdown], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'qa-report.md';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch {}
+    });
+
+    // ── New Scan ──────────────────────────────────────────────────────
+    newScanBtn.addEventListener('click', () => resetToHome());
+
+    // ── Lightbox ──────────────────────────────────────────────────────
+    function openLightbox(src) {
+      $('#lightbox-img').src = src;
+      $('#lightbox').classList.add('open');
+    }
+    function closeLightbox() {
+      $('#lightbox').classList.remove('open');
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeLightbox();
+    });
+
+    // ── Keyboard shortcut ─────────────────────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (!formSection.classList.contains('hidden')) {
+          scanForm.dispatchEvent(new Event('submit'));
+        }
+      }
+    });
+
+    // ── Init ──────────────────────────────────────────────────────────
+    showState('idle');
+  </script>
+</body>
+</html>
