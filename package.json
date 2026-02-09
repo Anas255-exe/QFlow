@@ -1,0 +1,19 @@
+{
+  "name": "playwright-qa-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/qaAgent.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/qaAgent.mjs",
+    "start": "npm run build && node dist/qaAgent.mjs",
+    "test": "npm run start",
+    "lint": "echo \"No lint configured\""
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "playwright": "^1.45.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.2"
+  }
+}
