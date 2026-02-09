@@ -3,6 +3,7 @@ import path from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { chromium, Page, BrowserContext, Response, Request } from 'playwright';
+import { GoogleGenerativeAI, GenerativeModel, Part } from '@google/generative-ai';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,8 @@ type FailedRequest = {
 const rl = createInterface({ input, output });
 const NAV_TIMEOUT = Number(process.env.NAV_TIMEOUT_MS ?? '90000');
 const SETTLE_DELAY = 5_000;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? '';
+const LLM_ENABLED = !!GEMINI_API_KEY;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +63,704 @@ const slug = (v: string) =>
   (v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'ev');
 
 const ensureDir = (d: string) => fs.mkdir(d, { recursive: true });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  LLM MODULE — Google Gemini Integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let geminiModel: GenerativeModel | null = null;
+let geminiVisionModel: GenerativeModel | null = null;
+
+/** Throttle to stay within RPM limits */
+let lastLLMCall = 0;
+const LLM_MIN_DELAY = 7_000; // ~8-9 RPM max to stay under limits
+
+const throttleLLM = async () => {
+  const elapsed = Date.now() - lastLLMCall;
+  if (elapsed < LLM_MIN_DELAY) {
+    await new Promise(r => setTimeout(r, LLM_MIN_DELAY - elapsed));
+  }
+  lastLLMCall = Date.now();
+};
+
+const initGemini = () => {
+  if (!GEMINI_API_KEY) {
+    console.log('  ⚠ GEMINI_API_KEY not set — LLM features disabled. Set it for AI-powered testing.');
+    return;
+  }
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+  // Use 2.5 Flash Lite (10 RPM) for fast text decisions
+  geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+  // Use 2.5 Flash (5 RPM) for vision/heavy analysis
+  geminiVisionModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+  console.log('  ✓ Gemini LLM initialized');
+  console.log('    Text model:   gemini-2.5-flash-lite (10 RPM)');
+  console.log('    Vision model: gemini-2.5-flash (5 RPM)');
+};
+
+/** Generic text prompt to Gemini (uses fast lite model) */
+const askGemini = async (prompt: string): Promise<string> => {
+  if (!geminiModel) return '';
+  try {
+    await throttleLLM();
+    const result = await geminiModel.generateContent(prompt);
+    return result.response.text();
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+      log('Rate limited — waiting 15s...');
+      await new Promise(r => setTimeout(r, 15_000));
+      try {
+        const result = await geminiModel.generateContent(prompt);
+        return result.response.text();
+      } catch { return ''; }
+    }
+    log(`LLM call failed: ${msg}`);
+    return '';
+  }
+};
+
+/** Send a screenshot (PNG path) + text prompt to Gemini Vision (uses 2.5 Flash) */
+const askGeminiVision = async (screenshotPath: string, prompt: string): Promise<string> => {
+  const model = geminiVisionModel || geminiModel;
+  if (!model) return '';
+  try {
+    await throttleLLM();
+    const imageData = await fs.readFile(screenshotPath);
+    const imagePart: Part = {
+      inlineData: {
+        mimeType: 'image/png',
+        data: imageData.toString('base64'),
+      },
+    };
+    const result = await model.generateContent([prompt, imagePart]);
+    return result.response.text();
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+      log('Rate limited — waiting 15s...');
+      await new Promise(r => setTimeout(r, 15_000));
+      try {
+        const imageData = await fs.readFile(screenshotPath);
+        const imagePart: Part = {
+          inlineData: { mimeType: 'image/png', data: imageData.toString('base64') },
+        };
+        const result = await model.generateContent([prompt, imagePart]);
+        return result.response.text();
+      } catch { return ''; }
+    }
+    log(`LLM vision call failed: ${msg}`);
+    return '';
+  }
+};
+
+/** Extract a compact DOM summary for LLM context */
+const getDOMSummary = async (page: Page): Promise<string> => {
+  return page.evaluate(() => {
+    const MAX = 200;
+    const elements: string[] = [];
+    let count = 0;
+
+    const walk = (el: Element, depth: number) => {
+      if (count >= MAX) return;
+      const tag = el.tagName.toLowerCase();
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return;
+
+      const attrs: string[] = [];
+      if (el.id) attrs.push(`id="${el.id}"`);
+      const cls = el.className && typeof el.className === 'string' ? el.className.trim().slice(0, 60) : '';
+      if (cls) attrs.push(`class="${cls}"`);
+      if (el.getAttribute('role')) attrs.push(`role="${el.getAttribute('role')}"`);
+      if (el.getAttribute('aria-label')) attrs.push(`aria-label="${el.getAttribute('aria-label')}"`);
+      if (el.getAttribute('href')) attrs.push(`href="${(el.getAttribute('href') ?? '').slice(0, 80)}"`);
+      if (el.getAttribute('placeholder')) attrs.push(`placeholder="${el.getAttribute('placeholder')}"`);
+      if ((el as HTMLInputElement).type) attrs.push(`type="${(el as HTMLInputElement).type}"`);
+      if ((el as HTMLButtonElement).disabled) attrs.push('disabled');
+
+      const text = (el.childNodes.length <= 3)
+        ? Array.from(el.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent?.trim()).filter(Boolean).join(' ').slice(0, 50)
+        : '';
+
+      const indent = '  '.repeat(Math.min(depth, 6));
+      const attrStr = attrs.length ? ' ' + attrs.join(' ') : '';
+      const textStr = text ? ` "${text}"` : '';
+      elements.push(`${indent}<${tag}${attrStr}>${textStr}`);
+      count++;
+
+      // Only descend into meaningful tags
+      const skipChildren = ['svg', 'script', 'style', 'noscript'];
+      if (!skipChildren.includes(tag)) {
+        for (const child of el.children) walk(child, depth + 1);
+      }
+    };
+
+    walk(document.body, 0);
+    return elements.join('\n');
+  });
+};
+
+/** Page understanding — ask Gemini what the page is about */
+const getPageUnderstanding = async (page: Page, ctx: RunContext): Promise<string> => {
+  if (!geminiModel) return '';
+
+  const screenshotFile = path.join(ctx.screenshotDir, `llm-page-understand-${Date.now()}.png`);
+  await page.screenshot({ path: screenshotFile, fullPage: false });
+
+  const domSummary = await getDOMSummary(page);
+  const pageTitle = await page.title();
+  const pageUrl = page.url();
+
+  const prompt = `You are an expert QA tester analyzing a web application.
+
+Page URL: ${pageUrl}
+Page Title: ${pageTitle}
+
+Here is a simplified DOM structure of the visible page:
+\`\`\`
+${domSummary.slice(0, 4000)}
+\`\`\`
+
+I'm also showing you a screenshot of this page.
+
+Please analyze and return:
+1. What kind of application/website is this? (e.g., DeFi exchange, e-commerce, blog, dashboard)
+2. What are the main features/sections visible?
+3. What are the most important user workflows to test?
+4. What areas look potentially buggy or problematic from the screenshot?
+5. List 10 specific test actions we should perform (be specific: "click the Swap button", "enter 100 in the amount field", etc.)
+
+Return your analysis in a structured format.`;
+
+  return askGeminiVision(screenshotFile, prompt);
+};
+
+/** LLM-powered visual bug detection on a screenshot */
+const analyzeScreenshotForBugs = async (
+  screenshotPath: string,
+  pageContext: string,
+): Promise<{ bugs: { title: string; severity: string; description: string; category: string }[] }> => {
+  if (!geminiModel) return { bugs: [] };
+
+ const prompt = `
+You are a QA reporting system for a real software product.
+
+Workflow testing of the website is currently in progress.
+Your role is to produce a USER-FACING QA BUG REPORT that reflects all CONFIRMED issues discovered so far.
+
+Context about the website and its purpose:
+${pageContext}
+
+CRITICAL RULES (must follow strictly):
+- Do NOT mention testing progress, steps taken, retries, time, or exploration strategy
+- Do NOT mention AI, agents, automation, tools, screenshots, or analysis
+- Do NOT describe how issues were discovered
+- Do NOT use uncertainty or speculation (no "appears", "seems", "might", "possibly")
+- Report ONLY issues that a real user would experience
+- Write as a senior QA engineer documenting confirmed findings
+- Treat every reported bug as factual and reproducible
+- Be exhaustive: include every distinct confirmed issue
+- If a potential issue is not yet confirmed by evidence, do NOT report it
+
+Definition of a bug:
+Any user-visible behavior, UI state, or response that:
+- blocks or breaks a workflow,
+- causes confusion or inconsistency,
+- gives no feedback for an action,
+- misrepresents system state,
+- or degrades trust in the product.
+
+You should report issues including (but not limited to):
+- User actions that result in no visible response
+- Successful actions with no confirmation or feedback
+- Failed actions without a visible error message
+- UI state not updating after an action completes
+- Data shown that contradicts the performed action
+- Loading states that do not resolve
+- Navigation leading to broken or empty pages
+- Forms that accept input but do not submit
+- Actions requiring repeated attempts without explanation
+- State inconsistencies between pages or views
+- Visual or layout issues that block or confuse interaction
+- Accessibility issues that prevent effective use
+
+For EACH bug:
+- State clearly what the user does
+- State exactly what happens instead of the expected outcome
+- Explain why this negatively impacts the user
+- Keep language factual, direct, and user-centered
+- Do NOT reference the testing process or timing
+
+Return ONLY valid JSON (no markdown, no commentary, no extra text) in EXACTLY this format:
+
+{
+  "bugs": [
+    {
+      "title": "Concise summary of the broken user experience",
+      "severity": "Critical | High | Medium | Low",
+      "description": "What the user experiences, where it occurs, and why it negatively affects the user",
+      "category": "Functional | UX | Layout | Accessibility | Content"
+    }
+  ]
+}
+
+Severity definitions:
+- Critical: Prevents completion of a core user task or workflow
+- High: Causes major confusion, repeated failure, or loss of trust
+- Medium: Workflow completes but behavior is unclear or inconsistent
+- Low: Minor issue that does not block task completion
+
+If there are no confirmed user-impacting issues at this time, return exactly:
+{"bugs": []}
+`;
+
+
+  const raw = await askGeminiVision(screenshotPath, prompt);
+  try {
+    // Strip any markdown code fences
+    const cleaned = raw.replace(/```json\s*\n?/g, '').replace(/```\s*$/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch {
+    log('LLM visual analysis returned non-JSON, skipping');
+    return { bugs: [] };
+  }
+};
+
+/** Ask Gemini what action to take next during autonomous exploration */
+type LLMAction = {
+  action: 'click' | 'fill' | 'scroll' | 'hover' | 'navigate' | 'press_key' | 'done';
+  selector?: string;
+  text?: string;
+  value?: string;
+  url?: string;
+  key?: string;
+  reasoning: string;
+};
+
+const getNextTestAction = async (
+  page: Page,
+  ctx: RunContext,
+  history: string[],
+  pageUnderstanding: string,
+): Promise<LLMAction> => {
+  if (!geminiModel) return { action: 'done', reasoning: 'LLM not available' };
+
+  const screenshotFile = path.join(ctx.screenshotDir, `llm-action-${Date.now()}.png`);
+  await page.screenshot({ path: screenshotFile, fullPage: false });
+
+  const domSummary = await getDOMSummary(page);
+  const currentUrl = page.url();
+
+  const prompt = `You are an autonomous QA testing agent. You control a browser and must decide what to test next.
+
+Page Understanding: ${pageUnderstanding.slice(0, 1500)}
+
+Current URL: ${currentUrl}
+Current DOM (simplified):
+\`\`\`
+${domSummary.slice(0, 3000)}
+\`\`\`
+
+Actions already performed:
+${history.slice(-15).map((h, i) => `${i + 1}. ${h}`).join('\n')}
+
+I'm showing you a screenshot of the current page state.
+
+Your goal: Find bugs by interacting with the page. Choose ONE next action to test something that hasn't been tested yet.
+
+Rules:
+- Prefer testing core functionality (forms, buttons, navigation) over cosmetic elements
+- Try edge cases: empty inputs, special characters, very long values, negative numbers
+- Test all visible interactive elements
+- If you've tested most things, say "done"
+- Make selector values that Playwright can find (CSS selectors or text content)
+- For 'click', provide either a CSS selector OR text content to find the element
+- For 'fill', provide the selector and value to type
+
+Return ONLY valid JSON (no markdown fences) in this exact format:
+{
+  "action": "click|fill|scroll|hover|navigate|press_key|done",
+  "selector": "CSS selector like button.submit or #email-input",
+  "text": "visible text to find element by (alternative to selector)",
+  "value": "value to type (for fill action)",
+  "url": "url to navigate to (for navigate action)",
+  "key": "key name (for press_key action, e.g. Enter, Tab, Escape)",
+  "reasoning": "Why this action is a good test"
+}`;
+
+  const raw = await askGeminiVision(screenshotFile, prompt);
+  try {
+    const cleaned = raw.replace(/```json\s*\n?/g, '').replace(/```\s*$/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch {
+    return { action: 'done', reasoning: 'Could not parse LLM response' };
+  }
+};
+
+/** Execute a single LLM-decided action and return result description */
+const executeLLMAction = async (
+  page: Page,
+  ctx: RunContext,
+  action: LLMAction,
+  baseUrl: string,
+): Promise<{ description: string; error: boolean; jsErrors: number }> => {
+  const errorsBefore = pageErrors.length;
+
+  try {
+    switch (action.action) {
+      case 'click': {
+        let locator;
+        if (action.text) {
+          locator = page.getByText(action.text, { exact: false }).first();
+        } else if (action.selector) {
+          locator = page.locator(action.selector).first();
+        }
+        if (!locator) return { description: 'No target for click', error: true, jsErrors: 0 };
+
+        const visible = await locator.isVisible().catch(() => false);
+        if (!visible) return { description: `Element "${action.text || action.selector}" not visible`, error: true, jsErrors: 0 };
+
+        await locator.click({ timeout: 5_000 });
+        await page.waitForTimeout(1500);
+        return {
+          description: `Clicked "${action.text || action.selector}"`,
+          error: false,
+          jsErrors: pageErrors.length - errorsBefore,
+        };
+      }
+
+      case 'fill': {
+        let locator;
+        if (action.text) {
+          locator = page.getByPlaceholder(action.text, { exact: false }).first();
+        } else if (action.selector) {
+          locator = page.locator(action.selector).first();
+        }
+        if (!locator) return { description: 'No target for fill', error: true, jsErrors: 0 };
+
+        const visible = await locator.isVisible().catch(() => false);
+        if (!visible) return { description: `Input "${action.text || action.selector}" not visible`, error: true, jsErrors: 0 };
+
+        await locator.click({ timeout: 3_000 });
+        await locator.fill(action.value ?? 'test', { timeout: 3_000 });
+        await page.waitForTimeout(800);
+        return {
+          description: `Filled "${action.text || action.selector}" with "${action.value}"`,
+          error: false,
+          jsErrors: pageErrors.length - errorsBefore,
+        };
+      }
+
+      case 'scroll': {
+        await page.evaluate(() => window.scrollBy(0, 600));
+        await page.waitForTimeout(1000);
+        return { description: 'Scrolled down 600px', error: false, jsErrors: pageErrors.length - errorsBefore };
+      }
+
+      case 'hover': {
+        let locator;
+        if (action.text) {
+          locator = page.getByText(action.text, { exact: false }).first();
+        } else if (action.selector) {
+          locator = page.locator(action.selector).first();
+        }
+        if (!locator) return { description: 'No target for hover', error: true, jsErrors: 0 };
+
+        await locator.hover({ timeout: 3_000 });
+        await page.waitForTimeout(800);
+        return {
+          description: `Hovered "${action.text || action.selector}"`,
+          error: false,
+          jsErrors: pageErrors.length - errorsBefore,
+        };
+      }
+
+      case 'navigate': {
+        if (action.url) {
+          await page.goto(action.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+          await page.waitForTimeout(2000);
+          return { description: `Navigated to ${action.url}`, error: false, jsErrors: pageErrors.length - errorsBefore };
+        }
+        return { description: 'No URL for navigate', error: true, jsErrors: 0 };
+      }
+
+      case 'press_key': {
+        await page.keyboard.press(action.key || 'Enter');
+        await page.waitForTimeout(800);
+        return {
+          description: `Pressed key: ${action.key || 'Enter'}`,
+          error: false,
+          jsErrors: pageErrors.length - errorsBefore,
+        };
+      }
+
+      case 'done':
+        return { description: 'LLM decided testing is complete', error: false, jsErrors: 0 };
+
+      default:
+        return { description: `Unknown action: ${action.action}`, error: true, jsErrors: 0 };
+    }
+  } catch (err) {
+    return {
+      description: `Action failed: ${(err as Error).message.slice(0, 100)}`,
+      error: true,
+      jsErrors: pageErrors.length - errorsBefore,
+    };
+  }
+};
+
+/** LLM evaluates the results of an action to identify bugs */
+const evaluateActionResult = async (
+  page: Page,
+  ctx: RunContext,
+  actionDesc: string,
+  previousScreenshot: string,
+  jsErrors: number,
+  newConsoleErrors: string[],
+): Promise<{ bugs: { title: string; severity: string; description: string; category: string }[] }> => {
+  if (!geminiModel) return { bugs: [] };
+
+  const afterScreenshot = path.join(ctx.screenshotDir, `llm-eval-${Date.now()}.png`);
+  await page.screenshot({ path: afterScreenshot, fullPage: false });
+
+  const prompt = `You are an expert QA tester evaluating the result of a test action.
+
+Action performed: ${actionDesc}
+JS errors triggered: ${jsErrors}
+${newConsoleErrors.length ? `New console errors:\n${newConsoleErrors.slice(0, 5).join('\n')}` : 'No new console errors.'}
+
+I'm showing you a screenshot of the page AFTER the action was performed.
+
+Evaluate:
+1. Did the action produce the expected result?
+2. Are there any visual bugs, error messages, or unexpected behavior visible?
+3. Did the UI respond correctly?
+4. Any crashes, blank screens, or broken elements?
+
+Return ONLY valid JSON (no markdown fences):
+{
+  "bugs": [
+    {
+      "title": "Short descriptive title",
+      "severity": "Critical|High|Medium|Low",
+      "description": "What went wrong and why it matters",
+      "category": "Layout|Content|UX|Accessibility|Functional|Navigation"
+    }
+  ]
+}
+
+If everything looks correct, return: {"bugs": []}`;
+
+  const raw = await askGeminiVision(afterScreenshot, prompt);
+  try {
+    const cleaned = raw.replace(/```json\s*\n?/g, '').replace(/```\s*$/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch {
+    return { bugs: [] };
+  }
+};
+
+/** Main LLM autonomous exploration loop */
+const llmAutonomousExploration = async (
+  page: Page,
+  ctx: RunContext,
+  baseUrl: string,
+  maxIterations = 20,
+) => {
+  if (!geminiModel) return;
+
+  console.log('\n  ── LLM Autonomous Exploration ──\n');
+
+  // Step 1: Understand the page
+  log('LLM analyzing page...');
+  const pageUnderstanding = await getPageUnderstanding(page, ctx);
+  if (pageUnderstanding) {
+    log('LLM page understanding acquired');
+  }
+
+  // Step 2: Autonomous action loop
+  const history: string[] = [];
+  let consecutiveDone = 0;
+
+  for (let i = 0; i < maxIterations; i++) {
+    log(`LLM iteration ${i + 1}/${maxIterations}...`);
+
+    // Ask LLM what to do next
+    const action = await getNextTestAction(page, ctx, history, pageUnderstanding);
+    log(`LLM action: ${action.action} — ${action.reasoning.slice(0, 80)}`);
+
+    if (action.action === 'done') {
+      consecutiveDone++;
+      if (consecutiveDone >= 2) {
+        log('LLM has finished autonomous exploration');
+        break;
+      }
+      history.push('LLM indicated done, continuing for confirmation...');
+      continue;
+    }
+    consecutiveDone = 0;
+
+    // Take "before" screenshot
+    const beforeShot = path.join(ctx.screenshotDir, `llm-before-${i}-${Date.now()}.png`);
+    await page.screenshot({ path: beforeShot, fullPage: false });
+
+    // Track errors before action
+    const consoleErrorsBefore = [...consoleErrors];
+
+    // Execute the action
+    const result = await executeLLMAction(page, ctx, action, baseUrl);
+    history.push(`${action.action}: ${result.description} ${result.error ? '(FAILED)' : '(OK)'} [${result.jsErrors} JS errors]`);
+    log(`  Result: ${result.description}`);
+
+    // Evaluate the result with LLM
+    const newErrors = consoleErrors.filter(e => !consoleErrorsBefore.includes(e));
+    const evaluation = await evaluateActionResult(
+      page, ctx, result.description, beforeShot, result.jsErrors, newErrors,
+    );
+
+    // Record any bugs the LLM found
+    for (const llmBug of evaluation.bugs) {
+      const severity = (['Critical', 'High', 'Medium', 'Low'].includes(llmBug.severity)
+        ? llmBug.severity : 'Medium') as Severity;
+      const category = (['Navigation', 'Console', 'Network', 'Accessibility', 'SEO', 'Security',
+        'Performance', 'Layout', 'Functional', 'Content', 'UX'].includes(llmBug.category)
+        ? llmBug.category : 'Functional') as Category;
+
+      await addBug(page, ctx, {
+        title: `[AI] ${llmBug.title}`,
+        severity,
+        category,
+        description: llmBug.description,
+        steps: [
+          `LLM action: ${action.action} on "${action.text || action.selector || ''}"`,
+          `Reasoning: ${action.reasoning}`,
+        ],
+        evidenceLabel: `llm-bug-${i}`,
+      });
+      history.push(`BUG FOUND: ${llmBug.title}`);
+    }
+
+    // If action caused navigation away, maybe go back
+    const currentUrl = page.url();
+    if (result.jsErrors > 0) {
+      history.push(`⚠ ${result.jsErrors} JS error(s) triggered`);
+    }
+
+    // Safety: if we ended up far from the base, navigate back
+    try {
+      const currentOrigin = new URL(currentUrl).origin;
+      const baseOrigin = new URL(baseUrl).origin;
+      if (currentOrigin !== baseOrigin) {
+        await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        await page.waitForTimeout(2000);
+        history.push('Navigated back to base URL (went off-site)');
+      }
+    } catch { /* best-effort */ }
+
+    // Record as workflow result
+    workflowResults.push({
+      name: `AI Action ${i + 1}: ${action.action}`,
+      steps: [
+        { action: action.action, target: action.text || action.selector || action.url || '', value: action.value, expect: action.reasoning },
+      ],
+      passed: !result.error && result.jsErrors === 0 && evaluation.bugs.length === 0,
+      error: result.error ? result.description : (result.jsErrors > 0 ? `${result.jsErrors} JS error(s)` : undefined),
+    });
+  }
+
+  // Step 3: Final visual analysis of the page in its current state
+  log('LLM performing final visual inspection...');
+  const finalShot = path.join(ctx.screenshotDir, `llm-final-visual-${Date.now()}.png`);
+  await page.screenshot({ path: finalShot, fullPage: true });
+  const visualBugs = await analyzeScreenshotForBugs(finalShot, pageUnderstanding.slice(0, 1000));
+
+  for (const vBug of visualBugs.bugs) {
+    const severity = (['Critical', 'High', 'Medium', 'Low'].includes(vBug.severity)
+      ? vBug.severity : 'Medium') as Severity;
+    const category = (['Navigation', 'Console', 'Network', 'Accessibility', 'SEO', 'Security',
+      'Performance', 'Layout', 'Functional', 'Content', 'UX'].includes(vBug.category)
+      ? vBug.category : 'Layout') as Category;
+
+    await addBug(page, ctx, {
+      title: `[AI Visual] ${vBug.title}`,
+      severity,
+      category,
+      description: vBug.description,
+      steps: ['LLM visual inspection of page screenshot'],
+      evidenceLabel: 'llm-visual',
+    });
+  }
+
+  log(`LLM exploration complete: ${history.length} actions performed`);
+};
+
+/** LLM generates an intelligent executive summary for the report */
+const generateLLMReportSummary = async (url: string, scope: string): Promise<string> => {
+  if (!geminiModel) return '';
+
+  const bugSummaries = bugs.map(b => `[${b.severity}] ${b.title}: ${b.description}`).join('\n');
+  const wfSummaries = workflowResults.map(w => `[${w.passed ? 'PASS' : 'FAIL'}] ${w.name}`).join('\n');
+
+  const prompt = `You are a senior QA engineer writing an executive summary for a QA test report.
+
+Website tested: ${url}
+Scope: ${scope}
+Total bugs found: ${bugs.length}
+Critical: ${bugs.filter(b => b.severity === 'Critical').length}
+High: ${bugs.filter(b => b.severity === 'High').length}
+Medium: ${bugs.filter(b => b.severity === 'Medium').length}
+Low: ${bugs.filter(b => b.severity === 'Low').length}
+
+Bugs found:
+${bugSummaries.slice(0, 3000)}
+
+Workflow results:
+${wfSummaries.slice(0, 2000)}
+
+Write a concise executive summary (3-5 paragraphs) that:
+1. Describes the overall quality of the website
+2. Highlights the most critical issues that need immediate attention
+3. Groups related issues into themes
+4. Provides prioritized recommendations
+5. Notes any positive aspects of the site
+
+Write in professional QA report style. Use markdown formatting.`;
+
+  return askGemini(prompt);
+};
+
+/** LLM analyzes a specific page screenshot during crawl */
+const llmAnalyzePageDuringCrawl = async (
+  page: Page,
+  ctx: RunContext,
+  pageUrl: string,
+): Promise<void> => {
+  if (!geminiModel) return;
+
+  const shotFile = path.join(ctx.screenshotDir, `llm-crawl-${slug(pageUrl)}-${Date.now()}.png`);
+  await page.screenshot({ path: shotFile, fullPage: false });
+
+  const visualBugs = await analyzeScreenshotForBugs(shotFile, `Page: ${pageUrl}`);
+
+  for (const vBug of visualBugs.bugs) {
+    const severity = (['Critical', 'High', 'Medium', 'Low'].includes(vBug.severity)
+      ? vBug.severity : 'Medium') as Severity;
+    const category = (['Navigation', 'Console', 'Network', 'Accessibility', 'SEO', 'Security',
+      'Performance', 'Layout', 'Functional', 'Content', 'UX'].includes(vBug.category)
+      ? vBug.category : 'Layout') as Category;
+
+    await addBug(page, ctx, {
+      title: `[AI Visual] ${vBug.title}`,
+      severity,
+      category,
+      description: `On page ${pageUrl}: ${vBug.description}`,
+      steps: [`Navigate to ${pageUrl}`, 'LLM visual inspection'],
+      evidenceLabel: `llm-crawl-visual-${slug(pageUrl)}`,
+    });
+  }
+};
 
 const ask = async (q: string, fallback = '') => {
   const a = (await rl.question(fallback ? `${q} [${fallback}]: ` : `${q}: `)).trim();
@@ -1103,6 +1804,11 @@ const crawlSitePages = async (page: Page, ctx: RunContext, baseUrl: string) => {
         await takeScreenshot(page, ctx, `crawl-error-${slug(pageUrl)}`, true);
       }
 
+      // LLM visual analysis on each crawled page
+      if (LLM_ENABLED && visitedPages.length <= 5) {
+        await llmAnalyzePageDuringCrawl(page, ctx, pageUrl);
+      }
+
     } catch (err) {
       pageIssues.push(`${pageUrl} -> failed to load (timeout or crash)`);
     }
@@ -2064,9 +2770,22 @@ const writeReport = async (ctx: RunContext, url: string, scope: string) => {
   L.push(`| Run | ${ctx.runId} |`);
   L.push(`| Date | ${new Date().toISOString()} |`);
   L.push(`| Browser | Chromium (Playwright, headless) |`);
+  L.push(`| AI Engine | ${LLM_ENABLED ? 'Gemini 2.5 Flash + 2.5 Flash Lite' : 'Disabled (no API key)'} |`);
   L.push(`| Scope | ${scope} |`);
   L.push(`| Bugs Found | **${bugs.length}** |`);
   L.push('');
+
+  // LLM Executive Summary
+  if (LLM_ENABLED) {
+    log('Generating AI executive summary...');
+    const llmSummary = await generateLLMReportSummary(url, scope);
+    if (llmSummary) {
+      L.push(`## AI Executive Summary`);
+      L.push('');
+      L.push(llmSummary);
+      L.push('');
+    }
+  }
 
   // Summary by severity
   const bySev = (s: Severity) => bugs.filter(b => b.severity === s).length;
@@ -2197,10 +2916,13 @@ const writeReport = async (ctx: RunContext, url: string, scope: string) => {
 
 const main = async () => {
   console.log('\n============================================');
-  console.log('     Playwright QA Agent  --  Deep Scan      ');
+  console.log('     Playwright QA Agent  --  AI Deep Scan   ');
   console.log('============================================\n');
 
   try {
+    // Initialize LLM
+    initGemini();
+
     const url = await ask('Target URL');
     if (!url) throw new Error('A target URL is required.');
     const scope = await ask('Scope / notes', 'Full QA scan');
@@ -2299,6 +3021,19 @@ const main = async () => {
     log('Testing responsive (mobile viewport)...');
     await checkResponsive(browserCtx, ctx, url);
 
+    // ── LLM Autonomous Exploration ────────────────────────────────────────
+    if (LLM_ENABLED) {
+      // Return to base before LLM exploration
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
+      await page.waitForTimeout(SETTLE_DELAY);
+
+      await llmAutonomousExploration(page, ctx, url, 20);
+
+      // Return to base after LLM exploration
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT }).catch(() => {});
+      await page.waitForTimeout(SETTLE_DELAY);
+    }
+
     // ── Autonomous Workflow Tests ────────────────────────────────────────
     console.log('\n  ── Autonomous Workflow Tests ──\n');
 
@@ -2355,8 +3090,10 @@ const main = async () => {
     // Summary
     const wfPassed = workflowResults.filter(w => w.passed).length;
     const wfFailed = workflowResults.filter(w => !w.passed).length;
+    const aiBugs = bugs.filter(b => b.title.startsWith('[AI')).length;
     console.log('\n============================================');
     console.log(`  Scan complete -- ${bugs.length} bug(s) found`);
+    if (LLM_ENABLED) console.log(`  AI-discovered bugs: ${aiBugs}`);
     console.log(`  Workflows: ${workflowResults.length} total, ${wfPassed} passed, ${wfFailed} failed`);
     console.log('============================================');
     console.log(`\n  Report      : ${path.relative(process.cwd(), ctx.reportPath)}`);
