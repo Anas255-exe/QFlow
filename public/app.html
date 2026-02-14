@@ -382,6 +382,43 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── User Menu ──────────────────────────────────────────────────────── */
+    .user-menu {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .user-avatar {
+      width: 30px; height: 30px; border-radius: 50%;
+      border: 2px solid var(--border);
+      transition: border-color 200ms;
+    }
+    .user-avatar:hover { border-color: var(--primary); }
+    .user-name {
+      font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary);
+    }
+    .btn-logout {
+      font-size: 0.75rem; padding: 4px 10px; border-radius: 6px;
+      background: transparent; border: 1px solid var(--border);
+      color: var(--text-secondary); cursor: pointer;
+      font-family: var(--font); font-weight: 500;
+      transition: all 150ms;
+    }
+    .btn-logout:hover {
+      background: var(--error-light); color: var(--error);
+      border-color: #fecaca;
+    }
+
+    /* ── Auth Loading Screen ────────────────────────────────────────────── */
+    .auth-loading {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 60vh; flex-direction: column; gap: 16px;
+    }
+    .auth-loading .loading-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--primary);
+    }
+    .auth-loading p { color: var(--text-secondary); font-size: 0.875rem; }
+
     /* ── Responsive ────────────────────────────────────────────────────── */
     @media (max-width: 640px) {
       .main { padding: 20px 16px 60px; }
@@ -390,6 +427,7 @@
       .nav-content { padding: 0 16px; }
       .phases { flex-wrap: wrap; }
       .results-header { flex-direction: column; align-items: flex-start; }
+      .user-name { display: none; }
     }
   </style>
 </head>
@@ -405,6 +443,11 @@
       <div class="nav-right">
         <a href="/" class="nav-link" style="margin-right:4px;">Home</a>
         <span class="nav-badge">AI Powered</span>
+        <div class="user-menu hidden" id="user-menu">
+          <img class="user-avatar" id="user-avatar" src="" alt="avatar">
+          <span class="user-name" id="user-name"></span>
+          <button class="btn-logout" id="logout-btn">Log out</button>
+        </div>
       </div>
     </div>
   </nav>
@@ -500,7 +543,7 @@
           <div class="results-actions">
             <button class="btn btn-outline" id="download-btn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Download
+              Download ZIP
             </button>
             <button class="btn btn-primary" id="new-scan-btn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -825,19 +868,11 @@
       return `${m}m ${s % 60}s`;
     }
 
-    // ── Download Report ───────────────────────────────────────────────
-    downloadBtn.addEventListener('click', async () => {
+    // ── Download ZIP ──────────────────────────────────────────────────
+    downloadBtn.addEventListener('click', () => {
       if (!currentScanId) return;
-      try {
-        const res = await fetch(`/api/scans/${currentScanId}/report`);
-        const { markdown } = await res.json();
-        const blob = new Blob([markdown], { type: 'text/markdown' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'qa-report.md';
-        a.click();
-        URL.revokeObjectURL(a.href);
-      } catch {}
+      // Trigger browser download of the ZIP file
+      window.location.href = `/api/scans/${currentScanId}/download`;
     });
 
     // ── New Scan ──────────────────────────────────────────────────────
@@ -864,8 +899,36 @@
       }
     });
 
+    // ── Auth Check ─────────────────────────────────────────────────────
+    async function checkAuth() {
+      try {
+        const res = await fetch('/auth/me');
+        if (res.status === 401) {
+          // Not authenticated → redirect to login
+          window.location.href = '/auth/login';
+          return;
+        }
+        const data = await res.json();
+        // Show user info in nav if auth is enabled
+        if (data.authEnabled && data.user) {
+          const userMenu = $('#user-menu');
+          $('#user-avatar').src = data.avatar;
+          $('#user-name').textContent = data.user;
+          userMenu.classList.remove('hidden');
+        }
+      } catch {
+        // Server unreachable — stay on page
+      }
+    }
+
+    // ── Logout ─────────────────────────────────────────────────────────
+    $('#logout-btn').addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST' });
+      window.location.href = '/';
+    });
+
     // ── Init ──────────────────────────────────────────────────────────
-    showState('idle');
+    checkAuth().then(() => showState('idle'));
   </script>
 </body>
 </html>
