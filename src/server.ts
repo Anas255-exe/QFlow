@@ -279,7 +279,15 @@ app.post('/api/scan', requireAuth, async (req, res) => {
 
   // Spawn the agent in non-interactive mode (URL & scope via env vars)
   const agentPath = path.join(ROOT, 'dist', 'qaAgent.mjs');
-  const child = spawn('node', ['--env-file=.env', agentPath], {
+  console.log(`[scan:${scanId}] Spawning agent: node ${agentPath}`);
+  console.log(`[scan:${scanId}] URL=${url}, SCOPE=${scope}`);
+
+  // Use --env-file=.env only if .env exists (local dev), skip in containers
+  const envFileExists = await fs.access(path.join(ROOT, '.env')).then(() => true).catch(() => false);
+  const nodeArgs = envFileExists ? ['--env-file=.env', agentPath] : [agentPath];
+  console.log(`[scan:${scanId}] .env file ${envFileExists ? 'found' : 'not found (using process env)'}, args: ${nodeArgs.join(' ')}`);
+
+  const child = spawn('node', nodeArgs, {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -290,6 +298,25 @@ app.post('/api/scan', requireAuth, async (req, res) => {
   });
   scan.process = child;
   child.stdin.end();
+
+  // Handle spawn errors (e.g. binary not found)
+  child.on('error', (err) => {
+    const msg = `[SPAWN ERROR] ${err.message}`;
+    console.error(`[scan:${scanId}] ${msg}`);
+    scan.logs.push(msg);
+    broadcast(scanId, { type: 'log', line: msg });
+    scan.status = 'error';
+    scan.completedAt = Date.now();
+    delete scan.process;
+    broadcast(scanId, {
+      type: 'complete',
+      status: 'error',
+      bugsFound: 0,
+      outputDir: null,
+      duration: scan.completedAt - scan.startedAt,
+      error: msg,
+    });
+  });
 
   // Capture stdout
   child.stdout.on('data', (data: Buffer) => {
@@ -317,16 +344,26 @@ app.post('/api/scan', requireAuth, async (req, res) => {
   child.stderr.on('data', (data: Buffer) => {
     const lines = data.toString().split('\n').filter(Boolean);
     for (const line of lines) {
+      console.error(`[scan:${scanId}:stderr] ${line}`);
       scan.logs.push(`[stderr] ${line}`);
       broadcast(scanId, { type: 'log', line: `[stderr] ${line}` });
     }
   });
 
   // On process exit
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
+    console.log(`[scan:${scanId}] Process exited: code=${code}, signal=${signal}`);
     scan.status = code === 0 ? 'complete' : 'error';
     scan.completedAt = Date.now();
     delete scan.process;
+
+    // If the process crashed with no logs, add a diagnostic message
+    if (scan.status === 'error' && scan.logs.length === 0) {
+      const msg = `Agent process crashed immediately (code=${code}, signal=${signal}). Check Render logs for details.`;
+      scan.logs.push(msg);
+      broadcast(scanId, { type: 'log', line: msg });
+    }
+
     broadcast(scanId, {
       type: 'complete',
       status: scan.status,
